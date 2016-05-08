@@ -1,11 +1,12 @@
 #!env python3
 # -*- coding: utf-8 -*-
-# Time-Stamp: <2016-05-09 00:18:33>
+# Time-Stamp: <2016-05-09 02:08:51>
 
 product_name = 'RunTeX'
 version      = '0.0.0'
 
 latexmk      = 'latexmk'
+config_file  = 'runtex.conf'
 
 import os
 import sys
@@ -16,6 +17,8 @@ import argparse
 import configparser
 import textwrap
 import subprocess
+
+
 
 class Color:
     r = '\033[91m'
@@ -40,6 +43,126 @@ class Color:
     @classmethod
     def sky(self, str):
         return self.s + str + self.end
+
+
+
+def error(text):
+    print(Color.red('\n[ERROR] ' + text))
+    sys.exit(1)
+
+def warning(text):
+    print(Color.yellow('\n[Warning] ' + text + '\n'))
+
+
+
+
+def usage(message = None):
+    text = """usage: {this} [-h] [-V] command ...
+
+-h, --help  show this help message and exit
+-V          show program's version number and exit
+
+available commands:
+    {this} compile          compile {g}{tex}{e}
+    {this} archive suffix   compile and create {g}{tgz}{e}
+    {this} JHEP suffix      compile and create {g}{tgz}{e} (JHEP)"""
+
+    if config["remotedir"]:
+        text += """
+    {this} push [suffix]    compile and copy relevant files to {g}{remote}{e}
+    {this} pull [suffix]    pull files with <suffix> from {g}{remote}{e}"""
+    else:
+        text += """
+    {this} push [suffix]    available with {y}remotedir{e} option.
+    {this} pull [suffix]    available with {y}remotedir{e} option."""
+
+    print(text.format(
+        this = os.path.basename(sys.argv[0]),
+        g = Color.g,
+        y = Color.y,
+        e = Color.end,
+        tex = config["texfile"],
+        remote = config["remotedir"],
+        tgz = config["texfile"][0:-4] + "<suffix>.tar.gz",
+    ))
+
+    if message:
+        error(message)
+
+def setup():
+    if not(len(sys.argv) > 2 and sys.argv[1] == '--setup' and sys.argv[2]):
+        print("""{v}
+
+This program requires a file {g}{file}{e} that has following configurations
+
+    [main]
+    texfile   = {g}TEX_FILE_PATH{e}
+    remotedir = {g}REMOTE_DIR_PATH{e}
+
+where TEX_FILE_PATH is the TeX file to be compiled,
+and REMOTE_DIR_PATH (optional) is a path to a remote directory
+to/from which the TeX files are transferred.
+
+For automatic setup, please run {g}{this} --setup TEX_FILE_PATH{e}
+""".format(
+            v = product_name + " " + version,
+            this = os.path.basename(sys.argv[0]),
+            file = config_file,
+            g = Color.g,
+            e = Color.end))
+        return
+
+    tex = sys.argv[2]
+    if not os.path.exists(tex):
+        error('texfile "' + tex + '" not found.')
+    if not tex.endswith('.tex'):
+        error('TEX_FILE_PATH "' + tex + '" must have suffix ".tex".')
+
+    content = """[main]
+texfile     = {tex}
+# remotedir = ~/Dropbox/superproject/ (uncomment if you want)""".format(tex = tex)
+    f = open(config_file, 'w')
+    f.write(content)
+    f.close()
+
+    print("Setup completed.\nFor further configuration, edit {conf}.".format(conf = config_file))
+    return
+
+
+
+def read_config():
+    iniparser = configparser.ConfigParser()
+    iniparser.read(config_file)
+    config = {}
+    for i in ['texfile', 'remotedir']:
+        config[i] = iniparser.get('main', i, fallback = None)
+
+    if config['texfile']:
+        if not config['texfile'].endswith('.tex'):
+            error('texfile "' + config['texfile'] + '" must have suffix ".tex".')
+        if not os.path.exists(config['texfile']):
+            error('texfile "' + config['texfile'] + '" not found.')
+        config['texfile'] = os.path.expanduser(config['texfile'])
+
+    if config['remotedir']:
+        if not os.path.exists(config['remotedir']):
+            warning('remotedir "' + config['remotedir'] + '" not found.')
+        config['remotedir'] = os.path.expanduser(config['remotedir']).rstrip(os.path.sep)
+
+    return config
+
+def parse_args():
+    argparser = argparse.ArgumentParser(add_help = False)
+    argparser.error = lambda message: usage(message)
+    argparser.add_argument("args", nargs = argparse.REMAINDER)
+    argparser.add_argument("-h", "--help", action = 'store_true')
+    argparser.add_argument("-V", action='version', version = product_name + " " + version)
+    args = argparser.parse_args()
+    if args.help:
+        usage()
+        sys.exit()
+    return args.args
+
 
 
 def check_latexmk():
@@ -82,7 +205,7 @@ def get_dependencies(texfile_name, basedir = '.'):
 
     begin_tag = '#===Dependents for '
     end_tag   = '#===End dependents for '
-    dep = output.decode("utf-8") 
+    dep = output.decode("utf-8")
     dep = dep[dep.index(begin_tag) : ]
     dep = dep[0 : dep.rindex(end_tag)-1]
     # For begin_tag, exclude zero because it does exist at zero.
@@ -106,7 +229,7 @@ def compile(texfile_path, basedir = '.', remove_misc = False, quiet = False):
     check_latexmk()
     texfile_stem = check_texfile(texfile_path, basedir)
 
-    print("\n\n" + Color.green("Compile " + texfile + " in " + Color.b + basedir + Color.g + "."))
+    print("\n\n" + Color.green("Compile " + texfile_path + " in " + Color.b + basedir + Color.g + "."))
     subprocess.Popen([latexmk, '-pdf', '-quiet' if quiet else '', texfile_path], cwd = basedir).communicate()
 
     if remove_misc:
@@ -127,7 +250,7 @@ def compile(texfile_path, basedir = '.', remove_misc = False, quiet = False):
         os.rmdir(tempdir)
 
 
-def archive(src_tex_path, suffix = "", style = None):
+def archive(src_tex_path, suffix, style = None):
     '''Create an archive file ``stem.tar.gz`` etc., where ``stem`` is the
     basename of ``src_tex_path`` without extension with ``suffix``.
 
@@ -145,7 +268,7 @@ def archive(src_tex_path, suffix = "", style = None):
     '''
 
     check_latexmk()
-    dst_tex_stem = check_texfile(src_tex_path) + (suffix or "")
+    dst_tex_stem = check_texfile(src_tex_path) + suffix
     names = {}
     names["tempdir"] = dst_tex_stem
     names["texfile"] = os.path.join(os.path.dirname(src_tex_path), dst_tex_stem + ".tex")
@@ -207,83 +330,37 @@ def pull(texfile, remotedir, suffix = None):
 
 
 if __name__ == '__main__':
-    iniparser = configparser.ConfigParser()
-    iniparser.read('runtex.ini')
-    texfile_ini = iniparser.get('main', 'texfile',   fallback=None)
-    remotedir   = iniparser.get('main', 'remotedir', fallback=None)
-    if remotedir and remotedir.endswith('/'):
-        remotedir = remotedir[0:-1]
+    config = read_config()
 
-    epilog = """\
-    --tex texfile  specity main tex file%(texreq)s
-    -h, --help     show this help message and exit
-    -V             show program's version number and exit
-    
-    %(prog)s compile          compile %(tex)s
-    %(prog)s archive suffix   compile and make %(tgz)s
-    %(prog)s JHEP suffix      compile and make %(tgz)s (JHEP)
+    if not config['texfile']:
+        setup()
+        sys.exit()
 
-    """
-    if not texfile_ini:
-        epilog += """
-    Note: <texfile> and <remotedir> are recommended to be configured in runtex.ini, as
-      [main]
-      texfile   = greatproject.tex
-      remotedir = ~/Dropbox/greatproject_draft
-    """
-    elif remotedir:
-        epilog += """
-    %(prog)s push [suffix]    compile and copy related files to %(remote)s
-                                      If suffix is specified, tex/pdf/bbl are renamed to
-                                      %(rename)s.
-    %(prog)s pull [suffix]    remove all files and pull from %(remote)s."""
-    
-    if texfile_ini:
-        if not texfile_ini.endswith('.tex'):
-            raise Exception('texfile must have suffix ".tex"')
-        tex    = Color.green(texfile_ini)
-        tgz    = Color.green(texfile_ini[0:-4] + '<suffix>.tar.gz')
-        texreq = ", overriding the default value"
-        remote = Color.blue(remotedir) if remotedir else None
-        rename = Color.green(texfile_ini[0:-4] + '<suffix>.{tex,pdf,bbl}')
-    else:
-        tex    = "<texfile>"
-        tgz    = "<texfile><suffix>.tar.gz"
-        texreq = Color.yellow(" (required)")
-        remote = None
-        rename = None
+    args = parse_args()
 
-    epilog = epilog % { "prog": sys.argv[0], "tex": tex, "tgz": tgz, "texreq": texreq, "remote": remote, "rename": rename }
+    args_length = dict(
+        compile = [1],
+        archive = [2],
+        JHEP    = [2],
+        pull    = [1, 2],
+        push    = [1, 2],
+    )
+    if len(args) == 0:
+        usage('the following arguments are required: command')
+    elif not(args[0] in args_length.keys()):
+        usage('unknown command: ' + args[0])
+    elif not(len(args) in args_length[args[0]]):
+        usage('invalid options are specified for the command "' + args[0] + '"')
 
-    argparser = argparse.ArgumentParser(
-            add_help=False,
-            formatter_class=argparse.RawDescriptionHelpFormatter,
-            usage = "%(prog)s [-h] [-V] [--tex texfile] command ...",
-            epilog=textwrap.dedent(epilog))
-    argparser.add_argument("--tex", metavar="texfile", help=argparse.SUPPRESS)
-    argparser.add_argument("command", help=argparse.SUPPRESS)
-    argparser.add_argument("option", nargs=argparse.REMAINDER, metavar='...', default=None, help=argparse.SUPPRESS)
-    argparser.add_argument("-h", action='help', default=argparse.SUPPRESS, help=argparse.SUPPRESS)
-    argparser.add_argument("-V", action='version', version=productname + " " + version, help=argparse.SUPPRESS)
-    args = argparser.parse_args()
+    args += [None]
 
-    texfile = args.tex or texfile_ini or None
-    if not texfile:
-        raise Exception('texfile not specified; see help')
-    if not texfile.endswith('.tex'):
-        raise Exception('texfile must have suffix ".tex"')
-        
-    n_opt = len(args.option)
-    args.option  += [None]
-    if args.command == "compile" and n_opt == 0:
-        compile(texfile)
-    elif args.command == "archive" and n_opt <= 1:
-        archive(texfile, suffix = args.option[0])
-    elif args.command == "JHEP" and n_opt <= 1:
-        archive(texfile, suffix = args.option[0], style = "JHEP")
-    elif args.command == "pull" and n_opt <= 1:
-        pull(texfile, remotedir, suffix = args.option[0])
-    elif args.command == "push" and n_opt <= 1:
-        push(texfile, remotedir, suffix = args.option[0])
-    else:
-        argparser.parse_args(["-h"])
+    if args[0] == "compile":
+        compile(config['texfile'])
+    elif args[0] == "archive":
+        archive(config['texfile'], args[1])
+    elif args[0] == "JHEP":
+        archive(config['texfile'], args[1], style = "JHEP")
+    elif args[0] == "pull":
+        pull(config['texfile'], config['remotedir'], suffix = args[1])
+    elif args[0] == "push":
+        push(config['texfile'], config['remotedir'], suffix = args[1])
