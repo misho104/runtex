@@ -1,6 +1,6 @@
 #!env python3
 # -*- coding: utf-8 -*-
-# Time-Stamp: <2016-05-09 02:08:51>
+# Time-Stamp: <2016-05-09 13:34:19>
 
 product_name = 'RunTeX'
 version      = '0.0.0'
@@ -51,7 +51,7 @@ def error(text):
     sys.exit(1)
 
 def warning(text):
-    print(Color.yellow('\n[Warning] ' + text + '\n'))
+    print(Color.yellow('\n[Warning] ' + text))
 
 
 
@@ -117,6 +117,9 @@ For automatic setup, please run {g}{this} --setup TEX_FILE_PATH{e}
         error('texfile "' + tex + '" not found.')
     if not tex.endswith('.tex'):
         error('TEX_FILE_PATH "' + tex + '" must have suffix ".tex".')
+    tex = os.path.expanduser(tex)
+    if os.path.isabs(tex):
+        error('TEX_FILE_PATH "' + tex + '" should not be an absolute path')
 
     content = """[main]
 texfile     = {tex}
@@ -138,16 +141,18 @@ def read_config():
         config[i] = iniparser.get('main', i, fallback = None)
 
     if config['texfile']:
-        if not config['texfile'].endswith('.tex'):
-            error('texfile "' + config['texfile'] + '" must have suffix ".tex".')
         if not os.path.exists(config['texfile']):
-            error('texfile "' + config['texfile'] + '" not found.')
+            error('main.texfile "' + config['texfile'] + '" not found.')
+        if not config['texfile'].endswith('.tex'):
+            error('main.texfile "' + config['texfile'] + '" must have suffix ".tex".')
         config['texfile'] = os.path.expanduser(config['texfile'])
+        if os.path.isabs(config['texfile']):
+            error('main.texfile "' + config['texfile'] + '" should not be an absolute path')
 
     if config['remotedir']:
+        config['remotedir'] = os.path.expanduser(config['remotedir']).rstrip(os.path.sep)
         if not os.path.exists(config['remotedir']):
             warning('remotedir "' + config['remotedir'] + '" not found.')
-        config['remotedir'] = os.path.expanduser(config['remotedir']).rstrip(os.path.sep)
 
     return config
 
@@ -167,7 +172,7 @@ def parse_args():
 
 def check_latexmk():
     if not shutil.which(latexmk):
-        raise Exception('latexmk not found.')
+        error('latexmk not found.')
     pass
 
 def check_texfile(texfile_path, basedir = "."):
@@ -175,17 +180,18 @@ def check_texfile(texfile_path, basedir = "."):
     correct extention of ``.tex``.
     Returns *stem* of ``texfile_path``.
     """
+    # As we assume the configuration has already been validated, these are exceptions.
     if not texfile_path.endswith('.tex'):
-        raise Exception('texfile must have suffix ".tex"')
+        raise RuntimeError('texfile_path "{}" must have suffix ".tex"'.format(texfile_path))
     if not os.path.exists(os.path.join(basedir or ".", texfile_path)):
-        raise Exception('specified texfile not found.')
+        raise RuntimeError('specified texfile "{}" not found.'.format(texfile_path))
     return os.path.basename(texfile_path)[0:-4]
 
 def check_absence(path):
-    """Check that ``path`` does not exists.
+    """Check that ``path`` does not exists. Error & Exit if exists.
     """
     if os.path.lexists(path):
-        raise Exception('{} already exists.'.format(path))
+        error('{} already exists.'.format(path))
     pass
 
 def remove_file(path):
@@ -196,6 +202,7 @@ def remove_file(path):
     pass
 
 def get_dependencies(texfile_name, basedir = '.'):
+    """Return files required to compile ``texfile_name``, excluding ``texfile_name`` itself."""
     print("\n\n" + Color.green("Check dependency of " + Color.b + texfile_name + Color.g + "."))
 
     output, stderr = subprocess.Popen(
@@ -210,7 +217,7 @@ def get_dependencies(texfile_name, basedir = '.'):
     dep = dep[0 : dep.rindex(end_tag)-1]
     # For begin_tag, exclude zero because it does exist at zero.
     if dep.rfind(begin_tag) > 0 or dep.find(end_tag) >= 0:
-        raise Exception("Dependency cannot resolved")
+        error('Dependency cannot be resolved for {}.'.format(os.path.basename(texfile_name)))
     dep = dep.splitlines()[2:] # first two lines are removed
 
     dep = [x.lstrip("\n\r \t").rstrip("\n\r \t\\") for x in dep]
@@ -287,13 +294,16 @@ def archive(src_tex_path, suffix, style = None):
         check_absence(names[tag])
 
     os.makedirs(os.path.dirname(dst_path("texfile")), exist_ok = True)
-    shutil.copy(src_tex_path, dst_path("texfile"))
+    shutil.copy2(src_tex_path, dst_path("texfile"))
     dependents = get_dependencies(names["texfile"], names["tempdir"])
     for src in dependents:
-        if os.path.exists(src):
+        if os.path.isabs(f):
+            warning('This TeX depends on {}, which is not archived. '.format(f))
+            continue
+        elif os.path.exists(src):
             dst = os.path.join(names["tempdir"], src)
             os.makedirs(os.path.dirname(dst), exist_ok = True)
-            shutil.copy(src, dst)
+            shutil.copy2(src, dst)
         else:
             # FileNotFound should be treated by TeX compiler.
             # Just ignore it here.
