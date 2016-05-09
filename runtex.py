@@ -3,7 +3,7 @@
 # Time-Stamp: <2016-05-09 14:38:33>
 
 product_name = 'RunTeX'
-version      = '0.0.0'
+version      = '0.0.1'
 
 latexmk      = 'latexmk'
 config_file  = 'runtex.conf'
@@ -413,8 +413,71 @@ def push_and_pull_execute(file_list):
                     e = Color.end))
     return
 
-def pull(texfile, remotedir, suffix = None):
-    pass
+
+def pull(texfile_path, remotedir_path, suffix = None):
+    """Update the local files with the version in ``remotedir_path`` without compile.
+    Note that ``texfile_path`` is a path to the local version.
+    ``.tex`` file is updated with suffix resolved.
+    ``.bbl`` and ``.pdf`` files are kept.
+    Requisites are updated."""
+
+    stem = get_tex_stem(texfile_path, check_exists = False)
+    remote_path = lambda src: os.path.join(remotedir_path, src)
+
+    remote_texfile_path = remote_path(os.path.join(os.path.dirname(texfile_path), stem + (suffix or "") + '.tex'))
+    if not os.path.isfile(remote_texfile_path):
+        error('{} not found.'.format(remote_texfile_path))
+
+    file_list = []
+    if os.path.lexists(texfile_path):
+        if os.path.islink(texfile_path) or not os.path.isfile(texfile_path):
+            error('{} is not a file.'.format(texfile_path))
+        delta = os.stat(texfile_path).st_mtime - os.stat(remote_texfile_path).st_mtime
+        if abs(delta) < 2: # equivalent
+            file_list.append(('ignore', remote_texfile_path, texfile_path))
+        elif delta < 0:    # newer remote
+            file_list.append(('update', remote_texfile_path, texfile_path))
+        else:
+            file_list.append(('conflict', remote_texfile_path, texfile_path))
+    else:
+        file_list.append(('create', remote_texfile_path, texfile_path))
+
+    tempdir = tempfile.mkdtemp()
+    temptex = shutil.copy2(remote_texfile_path, tempdir)
+    dependents = get_dependencies(os.path.basename(temptex), tempdir)
+    shutil.rmtree(tempdir)
+
+    for dst in dependents:
+        if os.path.isabs(dst):
+            # NOTE: should be warning? MISHO cannot imagine the case falling here.
+            error('This TeX depends on {}, which cannot be pushed.'.format(src))
+        src = remote_path(dst)
+        if not os.path.exists(src):
+            # FileNotFound should be treated by TeX compiler.
+            # Just ignore such files.
+            continue
+        elif os.path.lexists(dst):
+            if os.path.islink(dst):
+                error('{} already exists as a symlink.'.format(dst))
+            elif os.path.isdir(dst):
+                error('{} already exists as a directory.'.format(dst))
+            elif os.path.isfile(dst):
+                delta = os.stat(src).st_mtime - os.stat(dst).st_mtime
+                if abs(delta) < 2: # equivalent
+                    file_list.append(('ignore', src, dst))
+                elif delta > 0:    # newer src=remote
+                    file_list.append(('update', src, dst))
+                else:              # newer dst=local
+                    file_list.append(('conflict', src, dst))
+                    flag_conflict = True
+            else:
+                raise RuntimeError('{} cannot be identified.'.format(dst))
+        else:
+            file_list.append(('create', src, dst))
+
+    push_and_pull_execute(file_list)
+    return
+
 
 
 if __name__ == '__main__':
