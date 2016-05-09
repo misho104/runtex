@@ -355,7 +355,6 @@ def push(texfile_path, remotedir_path, suffix = None):
     for tag, src, dst in file_list:
         check_absence(dst)
 
-    flag_conflict = False
     for src in get_dependencies(texfile_path):
         if os.path.isabs(src):
             # NOTE: should be warning? MISHO cannot imagine the case falling here.
@@ -378,12 +377,16 @@ def push(texfile_path, remotedir_path, suffix = None):
                     file_list.append(('update', src, dst))
                 else:              # newer remote
                     file_list.append(('conflict', src, dst))
-                    flag_conflict = True
             else:
                 raise RuntimeError('{} cannot be identified.'.format(dst))
         else:
             file_list.append(('create', src, dst))
 
+    push_and_pull_execute(file_list)
+    return
+
+
+def push_and_pull_execute(file_list):
     header = dict(
             create = Color.green('[create]'),
             update = Color.yellow('[update]'),
@@ -393,11 +396,12 @@ def push(texfile_path, remotedir_path, suffix = None):
     print("\nOperation:")
     [print('  ' + header[tag] + ' ' + dst) for tag, src, dst in file_list]
 
-    if flag_conflict:
+    if [x for x in file_list if x[0] == 'conflict']:
         error('Conflict detected. Abort for safety.')
 
-    if input("\nCONTINUE? (y/N) ").lower() == 'y':
-        src_len = max([len(src) for tag, src, dst in file_list if tag != 'ignore'])
+    execute = [x for x in file_list if x[0] != 'ignore']
+    if execute and input("\nCONTINUE? (y/N) ").lower() == 'y':
+        src_len = max([len(src) for tag, src, dst in execute])
         fmt     = '{color}{src:<' + str(src_len) + '} => {dst}{e}'
         for tag, src, dst in file_list:
             if tag != 'ignore':
