@@ -332,8 +332,71 @@ def archive(src_tex_path, suffix, style = None):
         print("\n" + Color.green("The archives are without top directory, ready for JHEP-submission."))
 
 
-def push(texfile, remotedir, suffix = None):
-    pass
+def push(texfile_path, remotedir_path, suffix = None):
+    """Update the files in ``remotedir_path`` with the local version.
+    ``.tex``, ``.bbl``, and ``.pdf`` files are updated as well as requisites."""
+
+    compile(texfile_path, quiet = True)
+
+    stem = check_texfile(texfile_path)
+    dst_path = lambda src: os.path.join(remotedir_path, src)
+
+    # tags: create, ignore, update
+    file_list = [
+            # TeX
+            ('create', texfile_path, dst_path(os.path.join(os.path.dirname(texfile_path), stem + (suffix or "") + '.tex'))),
+            # bbl
+            ('create', stem + '.bbl', dst_path(stem + (suffix or "") + '.bbl')),
+            # pdf
+            ('create', stem + '.pdf', dst_path(stem + (suffix or "") + '.pdf')),
+            ]
+    for tag, src, dst in file_list:
+        check_absence(dst)
+
+    for src in get_dependencies(texfile_path):
+        if os.path.isabs(src):
+            # NOTE: should be warning? MISHO cannot imagine the case falling here.
+            error('This TeX depends on {}, which cannot be pushed.'.format(src))
+        dst = dst_path(src)
+        if not os.path.exists(src):
+            # FileNotFound should be treated by TeX compiler.
+            # Just ignore such files.
+            continue
+        elif os.path.lexists(dst):
+            if os.path.islink(dst):
+                error('{} already exists as a symlink.'.format(dst))
+            elif os.path.isdir(dst):
+                error('{} already exists as a directory.'.format(dst))
+            elif os.path.isfile(dst):
+                if os.stat(src).st_mtime >  os.stat(dst).st_mtime:
+                    file_list.append(('update', src, dst))
+                else:
+                    file_list.append(('ignore', src, dst))
+            else:
+                raise RuntimeError('{} cannot be identified.'.format(dst))
+        else:
+            file_list.append(('create', src, dst))
+
+    header = dict(
+            create = Color.green('[create]'),
+            update = Color.yellow('[update]'),
+            ignore = '[ignore]')
+    print("\nOperation:")
+    [print('  ' + header[tag] + ' ' + dst) for tag, src, dst in file_list]
+
+    if input("\nCONTINUE? (y/N) ").lower() == 'y':
+        src_len = max([len(src) for tag, src, dst in file_list if tag != 'ignore'])
+        fmt     = '{color}{src:<' + str(src_len) + '} => {dst}{e}'
+
+        for tag, src, dst in file_list:
+            if tag != 'ignore':
+                shutil.copy2(src, dst)
+                print(fmt.format(
+                    src = src,
+                    dst = dst,
+                    color = Color.y if tag == 'update' else '',
+                    e = Color.end))
+    return
 
 def pull(texfile, remotedir, suffix = None):
     pass
