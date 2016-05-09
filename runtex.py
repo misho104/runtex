@@ -352,6 +352,7 @@ def push(texfile_path, remotedir_path, suffix = None):
     for tag, src, dst in file_list:
         check_absence(dst)
 
+    flag_conflict = False
     for src in get_dependencies(texfile_path):
         if os.path.isabs(src):
             # NOTE: should be warning? MISHO cannot imagine the case falling here.
@@ -367,10 +368,14 @@ def push(texfile_path, remotedir_path, suffix = None):
             elif os.path.isdir(dst):
                 error('{} already exists as a directory.'.format(dst))
             elif os.path.isfile(dst):
-                if os.stat(src).st_mtime >  os.stat(dst).st_mtime:
-                    file_list.append(('update', src, dst))
-                else:
+                delta = os.stat(src).st_mtime - os.stat(dst).st_mtime
+                if abs(delta) < 2: # equivalent
                     file_list.append(('ignore', src, dst))
+                elif delta > 0:    # newer local
+                    file_list.append(('update', src, dst))
+                else:              # newer remote
+                    file_list.append(('conflict', src, dst))
+                    flag_conflict = True
             else:
                 raise RuntimeError('{} cannot be identified.'.format(dst))
         else:
@@ -379,9 +384,13 @@ def push(texfile_path, remotedir_path, suffix = None):
     header = dict(
             create = Color.green('[create]'),
             update = Color.yellow('[update]'),
+            conflict = Color.red('[conflict]'),
             ignore = '[ignore]')
     print("\nOperation:")
     [print('  ' + header[tag] + ' ' + dst) for tag, src, dst in file_list]
+
+    if flag_conflict:
+        error('Conflict detected. Abort for safety.')
 
     if input("\nCONTINUE? (y/N) ").lower() == 'y':
         src_len = max([len(src) for tag, src, dst in file_list if tag != 'ignore'])
