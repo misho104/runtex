@@ -1,6 +1,6 @@
 #!env python3
 # -*- coding: utf-8 -*-
-# Time-Stamp: <2016-05-09 13:55:14>
+# Time-Stamp: <2016-05-09 14:38:33>
 
 product_name = 'RunTeX'
 version      = '0.0.0'
@@ -53,6 +53,11 @@ def error(text):
 def warning(text):
     print(Color.yellow('\n[Warning] ' + text))
 
+def copy_with_mkdir(src, dst):
+    dirname = os.path.dirname(dst)
+    if dirname and not os.path.isdir(dirname):
+        os.makedirs(dirname, exist_ok = True)
+    return shutil.copy2(src, dst)
 
 
 
@@ -292,8 +297,7 @@ def archive(src_tex_path, suffix, style = None):
     for tag in ["tempdir", "pdffile", "archive", "arcwpdf"]:
         check_absence(names[tag])
 
-    os.makedirs(os.path.dirname(dst_path("texfile")), exist_ok = True)
-    shutil.copy2(src_tex_path, dst_path("texfile"))
+    copy_with_mkdir(src_tex_path, dst_path("texfile"))
     dependents = get_dependencies(names["texfile"], names["tempdir"])
     for src in dependents:
         if os.path.isabs(f):
@@ -301,8 +305,7 @@ def archive(src_tex_path, suffix, style = None):
             continue
         elif os.path.exists(src):
             dst = os.path.join(names["tempdir"], src)
-            os.makedirs(os.path.dirname(dst), exist_ok = True)
-            shutil.copy2(src, dst)
+            copy_with_mkdir(src, dst)
         else:
             # FileNotFound should be treated by TeX compiler.
             # Just ignore it here.
@@ -386,6 +389,7 @@ def push(texfile_path, remotedir_path, suffix = None):
             update = Color.yellow('[update]'),
             conflict = Color.red('[conflict]'),
             ignore = '[ignore]')
+
     print("\nOperation:")
     [print('  ' + header[tag] + ' ' + dst) for tag, src, dst in file_list]
 
@@ -395,10 +399,9 @@ def push(texfile_path, remotedir_path, suffix = None):
     if input("\nCONTINUE? (y/N) ").lower() == 'y':
         src_len = max([len(src) for tag, src, dst in file_list if tag != 'ignore'])
         fmt     = '{color}{src:<' + str(src_len) + '} => {dst}{e}'
-
         for tag, src, dst in file_list:
             if tag != 'ignore':
-                shutil.copy2(src, dst)
+                copy_with_mkdir(src, dst)
                 print(fmt.format(
                     src = src,
                     dst = dst,
