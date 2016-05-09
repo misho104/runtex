@@ -1,6 +1,6 @@
 #!env python3
 # -*- coding: utf-8 -*-
-# Time-Stamp: <2016-05-09 13:34:19>
+# Time-Stamp: <2016-05-09 13:55:14>
 
 product_name = 'RunTeX'
 version      = '0.0.0'
@@ -175,15 +175,14 @@ def check_latexmk():
         error('latexmk not found.')
     pass
 
-def check_texfile(texfile_path, basedir = "."):
-    """Check that ``texfile_path``, relative to ``basedir``, exists and a
-    correct extention of ``.tex``.
-    Returns *stem* of ``texfile_path``.
-    """
+def get_tex_stem(texfile_path, basedir = ".", check_exists = True):
+    """Returns *stem* of ``texfile_path``, asserting that it is with correct extension ``.tex``.
+    If ``check_exists``, check that ``texfile_path``, relative to ``basedir``, exists."""
+
     # As we assume the configuration has already been validated, these are exceptions.
     if not texfile_path.endswith('.tex'):
         raise RuntimeError('texfile_path "{}" must have suffix ".tex"'.format(texfile_path))
-    if not os.path.exists(os.path.join(basedir or ".", texfile_path)):
+    if check_exists and not os.path.exists(os.path.join(basedir or ".", texfile_path)):
         raise RuntimeError('specified texfile "{}" not found.'.format(texfile_path))
     return os.path.basename(texfile_path)[0:-4]
 
@@ -234,7 +233,7 @@ def get_dependencies(texfile_name, basedir = '.'):
 def compile(texfile_path, basedir = '.', remove_misc = False, quiet = False):
     basedir = basedir or '.'
     check_latexmk()
-    texfile_stem = check_texfile(texfile_path, basedir)
+    texfile_stem = get_tex_stem(texfile_path, basedir)
 
     print("\n\n" + Color.green("Compile " + texfile_path + " in " + Color.b + basedir + Color.g + "."))
     subprocess.Popen([latexmk, '-pdf', '-quiet' if quiet else '', texfile_path], cwd = basedir).communicate()
@@ -275,7 +274,7 @@ def archive(src_tex_path, suffix, style = None):
     '''
 
     check_latexmk()
-    dst_tex_stem = check_texfile(src_tex_path) + suffix
+    dst_tex_stem = get_tex_stem(src_tex_path) + suffix
     names = {}
     names["tempdir"] = dst_tex_stem
     names["texfile"] = os.path.join(os.path.dirname(src_tex_path), dst_tex_stem + ".tex")
@@ -338,7 +337,7 @@ def push(texfile_path, remotedir_path, suffix = None):
 
     compile(texfile_path, quiet = True)
 
-    stem = check_texfile(texfile_path)
+    stem = get_tex_stem(texfile_path)
     dst_path = lambda src: os.path.join(remotedir_path, src)
 
     # tags: create, ignore, update
