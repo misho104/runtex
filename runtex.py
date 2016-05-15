@@ -1,6 +1,6 @@
 #!env python3
 # -*- coding: utf-8 -*-
-# Time-Stamp: <2016-05-09 14:38:33>
+# Time-Stamp: <2016-05-15 18:34:11>
 
 product_name = 'RunTeX'
 version      = '0.0.1'
@@ -343,17 +343,29 @@ def push(texfile_path, remotedir_path, suffix = None):
     stem = get_tex_stem(texfile_path)
     dst_path = lambda src: os.path.join(remotedir_path, src)
 
+    files = [ # src, dst
+        (texfile_path, dst_path(os.path.join(os.path.dirname(texfile_path), stem + (suffix or "") + '.tex'))),
+        (stem + '.bbl', dst_path(stem + (suffix or "") + '.bbl')),
+        (stem + '.pdf', dst_path(stem + (suffix or "") + '.pdf'))]
+
     # tags: create, ignore, update
-    file_list = [
-            # TeX
-            ('create', texfile_path, dst_path(os.path.join(os.path.dirname(texfile_path), stem + (suffix or "") + '.tex'))),
-            # bbl
-            ('create', stem + '.bbl', dst_path(stem + (suffix or "") + '.bbl')),
-            # pdf
-            ('create', stem + '.pdf', dst_path(stem + (suffix or "") + '.pdf')),
-            ]
-    for tag, src, dst in file_list:
-        check_absence(dst)
+    file_list = []
+    for src, dst in files:
+        if os.path.islink(dst):
+            error('{} already exists as a symlink.'.format(dst))
+        elif os.path.isdir(dst):
+            error('{} already exists as a directory.'.format(dst))
+        elif os.path.lexists(dst):
+            tag = 'update'
+        else:
+            tag = 'create'
+        file_list.append((tag, src, dst))
+    existing_files = [dst for tag, src, dst in file_list if tag == 'update']
+    if existing_files:
+        print(Color.yellow('The following files exist.'))
+        [print(dst) for dst in existing_files]
+        if input(Color.yellow("\nFORCE OVERWRITE? (y/N) ")).lower() != 'y':
+            error('Abort.')
 
     for src in get_dependencies(texfile_path):
         if os.path.isabs(src):
