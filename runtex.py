@@ -1,6 +1,6 @@
 #!env python3
 # -*- coding: utf-8 -*-
-# Time-Stamp: <2016-05-15 18:34:11>
+# Time-Stamp: <2016-06-03 11:14:30 misho>
 
 product_name = 'RunTeX'
 version      = '0.0.1'
@@ -17,6 +17,7 @@ import argparse
 import configparser
 import textwrap
 import subprocess
+import filecmp
 
 
 
@@ -229,6 +230,14 @@ def get_dependencies(texfile_name, basedir = '.'):
     localdep = [x for x in localdep if x != texfile_name]
     return localdep
 
+def compare_files_and_get_mode(src, dst):
+    """Compare files, assuming ``src`` and ``dst`` are existing files."""
+    if filecmp.cmp(src, dst):
+        return 'ignore'
+    elif os.stat(src).st_mtime > os.stat(dst).st_mtime:
+        return 'update'
+    else:
+        return 'conflict'
 
 
 # 'path' means full-path from a base (usually the currrent) directory to the file/dir.
@@ -372,6 +381,7 @@ def push(texfile_path, remotedir_path, suffix = None):
             # NOTE: should be warning? MISHO cannot imagine the case falling here.
             error('This TeX depends on {}, which cannot be pushed.'.format(src))
         dst = dst_path(src)
+        mode = ''
         if not os.path.exists(src):
             # FileNotFound should be treated by TeX compiler.
             # Just ignore such files.
@@ -382,17 +392,12 @@ def push(texfile_path, remotedir_path, suffix = None):
             elif os.path.isdir(dst):
                 error('{} already exists as a directory.'.format(dst))
             elif os.path.isfile(dst):
-                delta = os.stat(src).st_mtime - os.stat(dst).st_mtime
-                if abs(delta) < 2: # equivalent
-                    file_list.append(('ignore', src, dst))
-                elif delta > 0:    # newer local
-                    file_list.append(('update', src, dst))
-                else:              # newer remote
-                    file_list.append(('conflict', src, dst))
+                mode = compare_files_and_get_mode(src, dst)
             else:
                 raise RuntimeError('{} cannot be identified.'.format(dst))
         else:
-            file_list.append(('create', src, dst))
+            mode = 'create'
+        file_list.append((mode, src, dst))
 
     push_and_pull_execute(file_list)
     return
@@ -438,21 +443,22 @@ def pull(texfile_path, remotedir_path, suffix = None):
 
     remote_texfile_path = remote_path(os.path.join(os.path.dirname(texfile_path), stem + (suffix or "") + '.tex'))
     if not os.path.isfile(remote_texfile_path):
-        error('{} not found.'.format(remote_texfile_path))
+        d = os.path.dirname(remote_texfile_path)
+        candidates = "\t".join([f for f in os.listdir(d) if os.path.isfile(os.path.join(d, f)) and f.startswith(stem) and f.endswith('.tex') ])
+        error('{tex} not found.\n\nCandidates are:\n{candidates}'.format(
+            tex = remote_texfile_path,
+            candidates = candidates,
+            ))
 
     file_list = []
+    mode = ''
     if os.path.lexists(texfile_path):
         if os.path.islink(texfile_path) or not os.path.isfile(texfile_path):
             error('{} is not a file.'.format(texfile_path))
-        delta = os.stat(texfile_path).st_mtime - os.stat(remote_texfile_path).st_mtime
-        if abs(delta) < 2: # equivalent
-            file_list.append(('ignore', remote_texfile_path, texfile_path))
-        elif delta < 0:    # newer remote
-            file_list.append(('update', remote_texfile_path, texfile_path))
-        else:
-            file_list.append(('conflict', remote_texfile_path, texfile_path))
+        mode = compare_files_and_get_mode(remote_texfile_path, texfile_path)
     else:
-        file_list.append(('create', remote_texfile_path, texfile_path))
+        mode = 'create'
+    file_list.append((mode, remote_texfile_path, texfile_path))
 
     tempdir = tempfile.mkdtemp()
     temptex = shutil.copy2(remote_texfile_path, tempdir)
@@ -464,6 +470,7 @@ def pull(texfile_path, remotedir_path, suffix = None):
             # NOTE: should be warning? MISHO cannot imagine the case falling here.
             error('This TeX depends on {}, which cannot be pushed.'.format(src))
         src = remote_path(dst)
+        mode = ''
         if not os.path.exists(src):
             # FileNotFound should be treated by TeX compiler.
             # Just ignore such files.
@@ -474,18 +481,12 @@ def pull(texfile_path, remotedir_path, suffix = None):
             elif os.path.isdir(dst):
                 error('{} already exists as a directory.'.format(dst))
             elif os.path.isfile(dst):
-                delta = os.stat(src).st_mtime - os.stat(dst).st_mtime
-                if abs(delta) < 2: # equivalent
-                    file_list.append(('ignore', src, dst))
-                elif delta > 0:    # newer src=remote
-                    file_list.append(('update', src, dst))
-                else:              # newer dst=local
-                    file_list.append(('conflict', src, dst))
-                    flag_conflict = True
+                mode = compare_files_and_get_mode(src, dst)
             else:
                 raise RuntimeError('{} cannot be identified.'.format(dst))
         else:
-            file_list.append(('create', src, dst))
+            mode = 'create'
+        file_list.append((mode, src, dst))
 
     push_and_pull_execute(file_list)
     return
