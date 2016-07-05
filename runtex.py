@@ -1,6 +1,6 @@
 #!env python3
 # -*- coding: utf-8 -*-
-# Time-Stamp: <2016-06-03 11:14:30 misho>
+# Time-Stamp: <2016-06-27 16:03:35>
 
 product_name = 'RunTeX'
 version      = '0.0.1'
@@ -228,7 +228,7 @@ def get_dependencies(texfile_name, basedir = '.'):
     dep = [x.lstrip("\n\r \t").rstrip("\n\r \t\\") for x in dep]
     localdep = list(set([os.path.normpath(x) for x in dep if x.find(os.path.sep + "texmf") == -1]))
     localdep = [x for x in localdep if x != texfile_name]
-    return localdep
+    return sorted(localdep, key = lambda x: os.path.splitext(x)[::-1])
 
 def compare_files_and_get_mode(src, dst):
     """Compare files, assuming ``src`` and ``dst`` are existing files."""
@@ -309,8 +309,8 @@ def archive(src_tex_path, suffix, style = None):
     copy_with_mkdir(src_tex_path, dst_path("texfile"))
     dependents = get_dependencies(names["texfile"], names["tempdir"])
     for src in dependents:
-        if os.path.isabs(f):
-            warning('This TeX depends on {}, which is not archived. '.format(f))
+        if os.path.isabs(src):
+            warning('This TeX depends on {}, which is not archived. '.format(src))
             continue
         elif os.path.exists(src):
             dst = os.path.join(names["tempdir"], src)
