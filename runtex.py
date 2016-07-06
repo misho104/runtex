@@ -1,6 +1,6 @@
 #!env python3
 # -*- coding: utf-8 -*-
-# Time-Stamp: <2016-06-27 16:03:35>
+# Time-Stamp: <2016-07-06 15:20:55>
 
 product_name = 'RunTeX'
 version      = '0.0.1'
@@ -44,6 +44,23 @@ class Color:
     @classmethod
     def sky(self, str):
         return self.s + str + self.end
+
+
+
+class cd:
+    """
+    Context manager for changing the current working directory.
+    http://stackoverflow.com/questions/431684/how-do-i-cd-in-python
+    """
+    def __init__(self, newPath):
+        self.newPath = os.path.expanduser(newPath)
+
+    def __enter__(self):
+        self.savedPath = os.getcwd()
+        os.chdir(self.newPath)
+
+    def __exit__(self, etype, value, traceback):
+        os.chdir(self.savedPath)
 
 
 
@@ -181,14 +198,14 @@ def check_latexmk():
         error('latexmk not found.')
     pass
 
-def get_tex_stem(texfile_path, basedir = ".", check_exists = True):
+def get_tex_stem(texfile_path, check_exists = True):
     """Returns *stem* of ``texfile_path``, asserting that it is with correct extension ``.tex``.
-    If ``check_exists``, check that ``texfile_path``, relative to ``basedir``, exists."""
+    If ``check_exists``, check if exists."""
 
     # As we assume the configuration has already been validated, these are exceptions.
     if not texfile_path.endswith('.tex'):
         raise RuntimeError('texfile_path "{}" must have suffix ".tex"'.format(texfile_path))
-    if check_exists and not os.path.exists(os.path.join(basedir or ".", texfile_path)):
+    if check_exists and not os.path.exists(texfile_path):
         raise RuntimeError('specified texfile "{}" not found.'.format(texfile_path))
     return os.path.basename(texfile_path)[0:-4]
 
@@ -206,14 +223,18 @@ def remove_file(path):
         os.remove(path)
     pass
 
-def get_dependencies(texfile_name, basedir = '.'):
-    """Return files required to compile ``texfile_name``, excluding ``texfile_name`` itself."""
-    print("\n\n" + Color.green("Check dependency of " + Color.b + texfile_name + Color.g + "."))
+def pdf_from_eps(files):
+    return [f for f in files
+                if f.endswith('-eps-converted-to.pdf') and
+                   f.replace('-eps-converted-to.pdf', '.eps') in files]
+
+def get_dependencies(texfile_path):
+    """Return files required to compile ``texfile_path``, excluding ``texfile_path`` itself."""
+    print("\n\n" + Color.green("Check dependency of " + Color.b + texfile_path + Color.g + "."))
 
     output, stderr = subprocess.Popen(
-            [latexmk, '-g', '-deps', '-bibtex-', '-interaction=nonstopmode', '-quiet', texfile_name],
-            stdout = subprocess.PIPE,
-            cwd = basedir or '.').communicate()
+            [latexmk, '-g', '-deps', '-bibtex-', '-interaction=nonstopmode', '-quiet', texfile_path],
+            stdout = subprocess.PIPE).communicate()
 
     begin_tag = '#===Dependents for '
     end_tag   = '#===End dependents for '
@@ -222,13 +243,42 @@ def get_dependencies(texfile_name, basedir = '.'):
     dep = dep[0 : dep.rindex(end_tag)-1]
     # For begin_tag, exclude zero because it does exist at zero.
     if dep.rfind(begin_tag) > 0 or dep.find(end_tag) >= 0:
-        error('Dependency cannot be resolved for {}.'.format(os.path.basename(texfile_name)))
+        error('Dependency cannot be resolved for {}.'.format(texfile_path))
     dep = dep.splitlines()[2:] # first two lines are removed
 
     dep = [x.lstrip("\n\r \t").rstrip("\n\r \t\\") for x in dep]
-    localdep = list(set([os.path.normpath(x) for x in dep if x.find(os.path.sep + "texmf") == -1]))
-    localdep = [x for x in localdep if x != texfile_name]
-    return sorted(localdep, key = lambda x: os.path.splitext(x)[::-1])
+    # remove non-local files
+    dep = list(set([os.path.normpath(x) for x in dep if x.find(os.path.sep + "texmf") == -1]))
+    # remove TeX itself
+    dep = [x for x in dep if x != texfile_path]
+    # remove pdf converted from eps
+    [dep.remove(f) for f in pdf_from_eps(dep)]
+    # sort according to ext and then stem, and return.
+    return sorted(dep, key = lambda x: os.path.splitext(x)[::-1])
+
+def get_and_collect_dependencies(orig_texfile_path, target_dir, new_texfile_path):
+    """
+    Return files required to compile ``orig_texfile_path`` (relative path from ``cwd``),
+    but the TeX file is copied to ``target_dir``/``new_texfile_path``
+    and files required to compile are collected to ``target_dir``.
+    """
+    copy_with_mkdir(orig_texfile_path, os.path.join(target_dir, new_texfile_path))
+    for trial in range(0, 5):
+        with cd(target_dir):
+            deps = get_dependencies(new_texfile_path)
+            deps_to_copy = [f for f in deps if not os.path.exists(f)]
+        retry = False
+        for f in deps_to_copy:
+            if os.path.isabs(f):
+                warning('This TeX depends on {}, which is not archived. '.format(f))
+            elif os.path.exists(f):
+                copy_with_mkdir(f, os.path.join(target_dir, f))
+                retry = True
+            else:
+                warning('Required file {} not found.'.format(f))
+        if not retry:
+            return deps
+    error('Dependency not solved.')
 
 def compare_files_and_get_mode(src, dst):
     """Compare files, assuming ``src`` and ``dst`` are existing files."""
@@ -244,29 +294,29 @@ def compare_files_and_get_mode(src, dst):
 # 'stem' is a basename of file, with no dir, and no "extension".
 # 'name' is a basename of file including extension, and possibly with dir.
 
-def compile(texfile_path, basedir = '.', remove_misc = False, quiet = False):
-    basedir = basedir or '.'
+def compile(texfile_path, remove_misc = False, quiet = False):
     check_latexmk()
-    texfile_stem = get_tex_stem(texfile_path, basedir)
+    texfile_stem = get_tex_stem(texfile_path)
 
-    print("\n\n" + Color.green("Compile " + texfile_path + " in " + Color.b + basedir + Color.g + "."))
-    subprocess.Popen([latexmk, '-pdf', '-quiet' if quiet else '', texfile_path], cwd = basedir).communicate()
+    cwd = os.getcwd()
+    print("\n\n" + Color.green("Compile " + texfile_path+ " in " + Color.b + cwd + Color.g + "."))
+    subprocess.Popen([latexmk, '-pdf', '-quiet' if quiet else '', texfile_path]).communicate()
 
     if remove_misc:
-        print("\n\n" + Color.green("Unnecessary files in " + Color.b + basedir + Color.g + " are removed."))
+        print("\n\n" + Color.green("Unnecessary files in " + Color.b + cwd + Color.g + " are removed."))
         tempdir  = tempfile.mkdtemp()
         shelters = {}
-        # pdf and bbl are created in ``basedir``
+        # pdf and bbl are created in current dirrectory.
         for ext in [".pdf", "bbl"]:
-            src = os.path.join(basedir, texfile_stem + ext)
-            dst = os.path.join(tempdir, os.path.basename(src))
+            src = os.path.join(texfile_stem + ext)
+            dst = os.path.join(tempdir, src)
             if os.path.exists(src):
                 shelters[src] = dst
         for src in shelters.keys():
             shutil.move(src, tempdir)
-        subprocess.Popen([latexmk, '-CA', texfile_path], cwd = basedir).communicate()
+        subprocess.Popen([latexmk, '-CA', texfile_path]).communicate()
         for dst in shelters.values():
-            shutil.move(dst, basedir)
+            shutil.move(dst, '.')
         os.rmdir(tempdir)
 
 
@@ -306,21 +356,11 @@ def archive(src_tex_path, suffix, style = None):
     for tag in ["tempdir", "pdffile", "archive", "arcwpdf"]:
         check_absence(names[tag])
 
-    copy_with_mkdir(src_tex_path, dst_path("texfile"))
-    dependents = get_dependencies(names["texfile"], names["tempdir"])
-    for src in dependents:
-        if os.path.isabs(src):
-            warning('This TeX depends on {}, which is not archived. '.format(src))
-            continue
-        elif os.path.exists(src):
-            dst = os.path.join(names["tempdir"], src)
-            copy_with_mkdir(src, dst)
-        else:
-            # FileNotFound should be treated by TeX compiler.
-            # Just ignore it here.
-            pass
+    deps = get_and_collect_dependencies(src_tex_path, names["tempdir"], names["texfile"])
 
-    compile(names["texfile"], names["tempdir"], remove_misc = True, quiet = True)
+    with cd(names["tempdir"]):
+        compile(names["texfile"], remove_misc = True, quiet = True)
+        [remove_file(f.replace('.eps', '-eps-converted-to.pdf')) for f in deps if f.endswith('.eps')]
 
     if style == "JHEP":
         basedir = names["tempdir"]
@@ -441,12 +481,13 @@ def pull(texfile_path, remotedir_path, suffix = None):
     stem = get_tex_stem(texfile_path, check_exists = False)
     remote_path = lambda src: os.path.join(remotedir_path, src)
 
-    remote_texfile_path = remote_path(os.path.join(os.path.dirname(texfile_path), stem + (suffix or "") + '.tex'))
-    if not os.path.isfile(remote_texfile_path):
-        d = os.path.dirname(remote_texfile_path)
+    texfile_path_remote = os.path.join(os.path.dirname(texfile_path), stem + (suffix or "") + '.tex')
+    remote_tex          = remote_path(texfile_path_remote)
+    if not os.path.isfile(remote_tex):
+        d = os.path.dirname(remote_tex)
         candidates = "\t".join([f for f in os.listdir(d) if os.path.isfile(os.path.join(d, f)) and f.startswith(stem) and f.endswith('.tex') ])
         error('{tex} not found.\n\nCandidates are:\n{candidates}'.format(
-            tex = remote_texfile_path,
+            tex = remote_tex,
             candidates = candidates,
             ))
 
@@ -455,14 +496,14 @@ def pull(texfile_path, remotedir_path, suffix = None):
     if os.path.lexists(texfile_path):
         if os.path.islink(texfile_path) or not os.path.isfile(texfile_path):
             error('{} is not a file.'.format(texfile_path))
-        mode = compare_files_and_get_mode(remote_texfile_path, texfile_path)
+        mode = compare_files_and_get_mode(remote_tex, texfile_path)
     else:
         mode = 'create'
-    file_list.append((mode, remote_texfile_path, texfile_path))
+    file_list.append((mode, remote_tex, texfile_path))
 
     tempdir = tempfile.mkdtemp()
-    temptex = shutil.copy2(remote_texfile_path, tempdir)
-    dependents = get_dependencies(os.path.basename(temptex), tempdir)
+    with cd(remotedir_path):
+        dependents = get_and_collect_dependencies(texfile_path_remote, tempdir, texfile_path)
     shutil.rmtree(tempdir)
 
     for dst in dependents:
