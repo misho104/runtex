@@ -1,21 +1,19 @@
 #!env python3
 # -*- coding: utf-8 -*-
-# Time-Stamp: <2016-11-30 20:03:21>
+# Time-Stamp: <2016-06-27 16:03:35>
 
 product_name = 'RunTeX'
-version      = '0.0.1'
+version      = '0.2.0'
 
 latexmk      = 'latexmk'
 config_file  = 'runtex.conf'
 
 import os
 import sys
-import re
+import yaml
 import shutil
 import tempfile
 import argparse
-import configparser
-import textwrap
 import subprocess
 import filecmp
 
@@ -45,8 +43,6 @@ class Color:
     def sky(self, str):
         return self.s + str + self.end
 
-
-
 class cd:
     """
     Context manager for changing the current working directory.
@@ -61,8 +57,6 @@ class cd:
 
     def __exit__(self, etype, value, traceback):
         os.chdir(self.savedPath)
-
-
 
 def error(text):
     print(Color.red('\n[ERROR] ' + text))
@@ -86,41 +80,30 @@ def usage(message = None):
 -V          show program's version number and exit
 
 available commands:
-    {this} compile          compile {g}{tex}{e}
-    {this} archive suffix   compile and create {g}{tgz}{e}
-    {this} JHEP suffix      compile and create {g}{tgz}{e} (JHEP)"""
+    {this} compile (texfile)          compile texfile
+    {this} archive (texfile) suffix   compile and create .tar.gz archive
+    {this} JHEP (texfile) suffix      compile and create .tar.gz archive for JHEP
+    {this} push (texfile) [suffix]    compile and copy relevant files to the remote directory
+    {this} pull (texfile) [suffix]    pull files with <suffix> from the remote directory
 
-    if config["remotedir"]:
-        text += """
-    {this} push [suffix]    compile and copy relevant files to {g}{remote}{e}
-    {this} pull [suffix]    pull files with <suffix> from {g}{remote}{e}"""
-    else:
-        text += """
-    {this} push [suffix]    available with {y}remotedir{e} option.
-    {this} pull [suffix]    available with {y}remotedir{e} option."""
-
+<texfile> is mandatory if multiple rules are configured.
+"""
     print(text.format(
         this = os.path.basename(sys.argv[0]),
-        g = Color.g,
-        y = Color.y,
-        e = Color.end,
-        tex = config["texfile"],
-        remote = config["remotedir"],
-        tgz = config["texfile"][0:-4] + "<suffix>.tar.gz",
     ))
-
     if message:
         error(message)
+
 
 def setup():
     if not(len(sys.argv) > 2 and sys.argv[1] == '--setup' and sys.argv[2]):
         print("""{v}
 
-This program requires a file {g}{file}{e} that has following configurations
+This program requires a YAML file {g}{file}{e} that has following configurations
 
-    [main]
-    texfile   = {g}TEX_FILE_PATH{e}
-    remotedir = {g}REMOTE_DIR_PATH{e}
+    ---
+    texfile:   {g}TEX_FILE_PATH{e}
+    remotedir: {g}REMOTE_DIR_PATH{e}
 
 where TEX_FILE_PATH is the TeX file to be compiled,
 and REMOTE_DIR_PATH (optional) is a path to a remote directory
@@ -144,9 +127,13 @@ For automatic setup, please run {g}{this} --setup TEX_FILE_PATH{e}
     if os.path.isabs(tex):
         error('TEX_FILE_PATH "' + tex + '" should not be an absolute path')
 
-    content = """[main]
-texfile     = {tex}
-# remotedir = ~/Dropbox/superproject/ (uncomment if you want)""".format(tex = tex)
+    content = """---
+texfile:   {tex}
+# remotedir: ~/Dropbox/superproject/ (uncomment if you want)
+# extra:
+#     - additional files to sync
+#     -
+""".format(tex = tex)
     f = open(config_file, 'w')
     f.write(content)
     f.close()
@@ -155,29 +142,43 @@ texfile     = {tex}
     return
 
 
-
 def read_config():
-    iniparser = configparser.ConfigParser()
-    iniparser.read(config_file)
-    config = {}
-    for i in ['texfile', 'remotedir']:
-        config[i] = iniparser.get('main', i, fallback = None)
+    def check_config(config):
+        if config.get('texfile'):
+            if not os.path.exists(config['texfile']):
+                error('config: texfile "' + config['texfile'] + '" not found.')
+            if not config['texfile'].endswith('.tex'):
+                error('config: texfile "' + config['texfile'] + '" must have suffix ".tex".')
+            config['texfile'] = os.path.expanduser(config['texfile'])
+            if os.path.isabs(config['texfile']):
+                error('config: texfile "' + config['texfile'] + '" should not be an absolute path')
+        if config.get('remotedir'):
+            config['remotedir'] = os.path.expanduser(config['remotedir']).rstrip(os.path.sep)
+            if not os.path.exists(config['remotedir']):
+                warning('config: remotedir "' + config['remotedir'] + '" not found.')
+        if config.get('texfile') is None and config.get('remotedir') is None:
+            warning('config: phony rules without remotedir is useless')
+        if config.get('extra') and not isinstance(config.get('extra'), list):
+            error('config: extra must be a list.')
 
-    if config['texfile']:
-        if not os.path.exists(config['texfile']):
-            error('main.texfile "' + config['texfile'] + '" not found.')
-        if not config['texfile'].endswith('.tex'):
-            error('main.texfile "' + config['texfile'] + '" must have suffix ".tex".')
-        config['texfile'] = os.path.expanduser(config['texfile'])
-        if os.path.isabs(config['texfile']):
-            error('main.texfile "' + config['texfile'] + '" should not be an absolute path')
+    configs = dict()
+    try:
+        with open(config_file, 'r') as f:
+            for i in yaml.safe_load_all(f):
+                if i is None:
+                    continue
+                if i.get("texfile") and i.get("name"):
+                    error("a configuration has either of <texfile> or <name>")
+                name = i.get("texfile") or i.get("name")
+                if name is None:
+                    error("a configuration needs <texfile> or <name>")
+                else:
+                    check_config(i)
+                    configs[name] = i
+    except FileNotFoundError:
+        pass
+    return configs
 
-    if config['remotedir']:
-        config['remotedir'] = os.path.expanduser(config['remotedir']).rstrip(os.path.sep)
-        if not os.path.exists(config['remotedir']):
-            warning('remotedir "' + config['remotedir'] + '" not found.')
-
-    return config
 
 def parse_args():
     argparser = argparse.ArgumentParser(add_help = False)
@@ -192,7 +193,6 @@ def parse_args():
     return args.args
 
 
-
 def check_latexmk():
     if not shutil.which(latexmk):
         error('latexmk not found.')
@@ -200,7 +200,7 @@ def check_latexmk():
 
 def get_tex_stem(texfile_path, check_exists = True):
     """Returns *stem* of ``texfile_path``, asserting that it is with correct extension ``.tex``.
-    If ``check_exists``, check if exists."""
+    If ``check_exists``, check that it exists."""
 
     # As we assume the configuration has already been validated, these are exceptions.
     if not texfile_path.endswith('.tex'):
@@ -294,8 +294,9 @@ def compare_files_and_get_mode(src, dst):
 # 'stem' is a basename of file, with no dir, and no "extension".
 # 'name' is a basename of file including extension, and possibly with dir.
 
-def compile(texfile_path, remove_misc = False, quiet = False):
+def compile(config, remove_misc = False, quiet = False):
     check_latexmk()
+    texfile_path = config["texfile"]
     texfile_stem = get_tex_stem(texfile_path)
 
     cwd = os.getcwd()
@@ -320,7 +321,7 @@ def compile(texfile_path, remove_misc = False, quiet = False):
         os.rmdir(tempdir)
 
 
-def archive(src_tex_path, suffix, style = None):
+def archive(config, suffix, style = None):
     '''Create an archive file ``stem.tar.gz`` etc., where ``stem`` is the
     basename of ``src_tex_path`` without extension with ``suffix``.
 
@@ -338,6 +339,7 @@ def archive(src_tex_path, suffix, style = None):
     '''
 
     check_latexmk()
+    src_tex_path = config["texfile"]
     dst_tex_stem = get_tex_stem(src_tex_path) + suffix
     names = {}
     names["tempdir"] = dst_tex_stem
@@ -383,9 +385,12 @@ def archive(src_tex_path, suffix, style = None):
         print("\n" + Color.green("The archives are without top directory, ready for JHEP-submission."))
 
 
-def push(texfile_path, remotedir_path, suffix = None):
+def push(config, suffix = None):
     """Update the files in ``remotedir_path`` with the local version.
     ``.tex``, ``.bbl``, and ``.pdf`` files are updated as well as requisites."""
+
+    texfile_path   = config.get("texfile")
+    remotedir_path = config["remotedir"]
 
     compile(texfile_path, quiet = True)
 
@@ -474,13 +479,15 @@ def push_and_pull_execute(file_list):
     return
 
 
-def pull(texfile_path, remotedir_path, suffix = None):
+def pull(config, suffix = None):
     """Update the local files with the version in ``remotedir_path`` without compile.
     Note that ``texfile_path`` is a path to the local version.
     ``.tex`` file is updated with suffix resolved.
     ``.bbl`` and ``.pdf`` files are kept.
     Requisites are updated."""
 
+    texfile_path   = config.get("texfile")
+    remotedir_path = config["remotedir"]
     stem = get_tex_stem(texfile_path, check_exists = False)
     remote_path = lambda src: os.path.join(remotedir_path, src)
 
@@ -538,37 +545,58 @@ def pull(texfile_path, remotedir_path, suffix = None):
 
 
 if __name__ == '__main__':
-    config = read_config()
+    config_list = read_config()
 
-    if not config['texfile']:
+    if len(config_list) == 0:
         setup()
         sys.exit()
 
-    args = parse_args()
-
-    args_length = dict(
-        compile = [1],
-        archive = [2],
-        JHEP    = [2],
-        pull    = [1, 2],
-        push    = [1, 2],
+    args_length_dict = dict(
+        compile = [0],
+        archive = [1],
+        JHEP    = [1],
+        pull    = [0, 1],
+        push    = [0, 1],
     )
+
+    args = parse_args()
     if len(args) == 0:
-        usage('the following arguments are required: command')
-    elif not(args[0] in args_length.keys()):
-        usage('unknown command: ' + args[0])
-    elif not(len(args) in args_length[args[0]]):
-        usage('invalid options are specified for the command "' + args[0] + '"')
+        usage('arguments are missing')
 
-    args += [None]
+    command = args.pop(0)
+    target = args.pop(0) if (len(args) > 0 and args[0] in config_list.keys()) else None
 
-    if args[0] == "compile":
-        compile(config['texfile'])
-    elif args[0] == "archive":
-        archive(config['texfile'], args[1])
-    elif args[0] == "JHEP":
-        archive(config['texfile'], args[1], style = "JHEP")
-    elif args[0] == "pull":
-        pull(config['texfile'], config['remotedir'], suffix = args[1])
-    elif args[0] == "push":
-        push(config['texfile'], config['remotedir'], suffix = args[1])
+    args_length = args_length_dict.get(command)
+    if args_length is None:
+        usage('unknown command: ' + command)
+    if not(len(args) in args_length):
+        usage('invalid options are specified for the command "' + command + '"' + \
+              ("\n(maybe wrong <texfile> is specified?)" if (len(args) - 1 in args_length and target is None) else ""))
+
+    if target is None:
+        if len(config_list) == 1:
+            target = config_list.keys()[0]
+        else:
+            usage('<texfile> is missing')
+
+    config = config_list[target]
+
+    def needs(item):
+        if config.get(item) is None:
+            error('command "' + command + '" is invalid without "' + item + '" in configuration.')
+
+    if command == "compile":
+        needs('texfile')
+        compile(config)
+    elif command == "archive":
+        needs('texfile')
+        archive(config, args[0])
+    elif command == "JHEP":
+        needs('texfile')
+        archive(config, args[0], style = "JHEP")
+    if command == "pull":
+        needs('remotedir')
+        pull(config, suffix = (args[0] if len(args) == 1 else None))
+    elif command == "push":
+        needs('remotedir')
+        push(config, suffix = (args[0] if len(args) == 1 else None))
