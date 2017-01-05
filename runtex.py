@@ -1,6 +1,6 @@
 #!env python3
 # -*- coding: utf-8 -*-
-# Time-Stamp: <2016-07-06 15:20:55>
+# Time-Stamp: <2016-11-30 20:03:21>
 
 product_name = 'RunTeX'
 version      = '0.0.1'
@@ -400,6 +400,9 @@ def push(texfile_path, remotedir_path, suffix = None):
     # tags: create, ignore, update
     file_list = []
     for src, dst in files:
+        if not os.path.isfile(src):
+            warning('{} not found.'.format(src))
+            continue
         if os.path.islink(dst):
             error('{} already exists as a symlink.'.format(dst))
         elif os.path.isdir(dst):
