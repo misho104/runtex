@@ -43,6 +43,18 @@ class Color:
     def sky(self, str):
         return self.s + str + self.end
 
+    @classmethod
+    def mode_tag(self, mode):
+        if mode == 'create':
+            return self.green('[create]')
+        elif mode == 'update':
+            return self.yellow('[update]')
+        elif mode == 'conflict':
+            return self.red('[conflict]')
+        else:
+            return '[' + mode + ']'
+
+
 class cd:
     """
     Context manager for changing the current working directory.
@@ -111,7 +123,7 @@ to/from which the TeX files are transferred.
 
 For automatic setup, please run {g}{this} --setup TEX_FILE_PATH{e}
 """.format(
-            v = product_name + " " + version,
+            v = product_name + ' ' + version,
             this = os.path.basename(sys.argv[0]),
             file = config_file,
             g = Color.g,
@@ -167,11 +179,11 @@ def read_config():
             for i in yaml.safe_load_all(f):
                 if i is None:
                     continue
-                if i.get("texfile") and i.get("name"):
-                    error("a configuration has either of <texfile> or <name>")
-                name = i.get("texfile") or i.get("name")
+                if i.get('texfile') and i.get('name'):
+                    error('a configuration has either of <texfile> or <name>')
+                name = i.get('texfile') or i.get('name')
                 if name is None:
-                    error("a configuration needs <texfile> or <name>")
+                    error('a configuration needs <texfile> or <name>')
                 else:
                     check_config(i)
                     configs[name] = i
@@ -183,9 +195,9 @@ def read_config():
 def parse_args():
     argparser = argparse.ArgumentParser(add_help = False)
     argparser.error = lambda message: usage(message)
-    argparser.add_argument("args", nargs = argparse.REMAINDER)
-    argparser.add_argument("-h", "--help", action = 'store_true')
-    argparser.add_argument("-V", action='version', version = product_name + " " + version)
+    argparser.add_argument('args', nargs = argparse.REMAINDER)
+    argparser.add_argument('-h', '--help', action = 'store_true')
+    argparser.add_argument('-V', action='version', version = product_name + ' ' + version)
     args = argparser.parse_args()
     if args.help:
         usage()
@@ -216,6 +228,16 @@ def check_absence(path):
         error('{} already exists.'.format(path))
     pass
 
+def abort_if_not_file(path):
+    if os.path.lexists(path):
+        if os.path.islink(path):
+            error('{} exists as a symlink.'.format(path))
+        elif os.path.isdir(path):
+            error('{} exists as a directory.'.format(path))
+        elif not os.path.isfile(path):
+            raise RuntimeError('{} cannot be identified.'.format(path))
+    pass
+
 def remove_file(path):
     """Remove the **file** if exists.
     """
@@ -230,7 +252,7 @@ def pdf_from_eps(files):
 
 def get_dependencies(texfile_path):
     """Return files required to compile ``texfile_path``, excluding ``texfile_path`` itself."""
-    print("\n\n" + Color.green("Check dependency of " + Color.b + texfile_path + Color.g + "."))
+    print("\n\n" + Color.green('Check dependency of ' + Color.b + texfile_path + Color.g + '.'))
 
     output, stderr = subprocess.Popen(
             [latexmk, '-g', '-deps', '-bibtex-', '-interaction=nonstopmode', '-quiet', texfile_path],
@@ -238,7 +260,7 @@ def get_dependencies(texfile_path):
 
     begin_tag = '#===Dependents for '
     end_tag   = '#===End dependents for '
-    dep = output.decode("utf-8")
+    dep = output.decode('utf-8')
     dep = dep[dep.index(begin_tag) : ]
     dep = dep[0 : dep.rindex(end_tag)-1]
     # For begin_tag, exclude zero because it does exist at zero.
@@ -248,7 +270,7 @@ def get_dependencies(texfile_path):
 
     dep = [x.lstrip("\n\r \t").rstrip("\n\r \t\\") for x in dep]
     # remove non-local files
-    dep = list(set([os.path.normpath(x) for x in dep if x.find(os.path.sep + "texmf") == -1]))
+    dep = list(set([os.path.normpath(x) for x in dep if x.find(os.path.sep + 'texmf') == -1]))
     # remove TeX itself
     dep = [x for x in dep if x != texfile_path]
     # remove pdf converted from eps
@@ -282,6 +304,9 @@ def get_and_collect_dependencies(orig_texfile_path, target_dir, new_texfile_path
 
 def compare_files_and_get_mode(src, dst):
     """Compare files, assuming ``src`` and ``dst`` are existing files."""
+    if not os.path.lexists(dst):
+        return 'create'
+    abort_if_not_file(dst)
     if filecmp.cmp(src, dst):
         return 'ignore'
     elif os.stat(src).st_mtime > os.stat(dst).st_mtime:
@@ -296,19 +321,22 @@ def compare_files_and_get_mode(src, dst):
 
 def compile(config, remove_misc = False, quiet = False):
     check_latexmk()
-    texfile_path = config["texfile"]
+    texfile_path = config['texfile']
     texfile_stem = get_tex_stem(texfile_path)
 
     cwd = os.getcwd()
-    print("\n\n" + Color.green("Compile " + texfile_path+ " in " + Color.b + cwd + Color.g + "."))
-    subprocess.Popen([latexmk, '-pdf', '-quiet' if quiet else '', texfile_path]).communicate()
+    print('\n\n' + Color.green('Compile ' + texfile_path+ ' in ' + Color.b + cwd + Color.g + '.'))
+    process = [latexmk, '-pdf', '-quiet', texfile_path]
+    if not quiet:
+        process.pop(2)
+    subprocess.Popen(process).communicate()
 
     if remove_misc:
-        print("\n\n" + Color.green("Unnecessary files in " + Color.b + cwd + Color.g + " are removed."))
+        print("\n\n" + Color.green('Unnecessary files in ' + Color.b + cwd + Color.g + ' are removed.'))
         tempdir  = tempfile.mkdtemp()
         shelters = {}
         # pdf and bbl are created in current dirrectory.
-        for ext in [".pdf", "bbl"]:
+        for ext in ['.pdf', '.bbl']:
             src = os.path.join(texfile_stem + ext)
             dst = os.path.join(tempdir, src)
             if os.path.exists(src):
@@ -339,127 +367,119 @@ def archive(config, suffix, style = None):
     '''
 
     check_latexmk()
-    src_tex_path = config["texfile"]
+    src_tex_path = config['texfile']
     dst_tex_stem = get_tex_stem(src_tex_path) + suffix
     names = {}
-    names["tempdir"] = dst_tex_stem
-    names["texfile"] = os.path.join(os.path.dirname(src_tex_path), dst_tex_stem + ".tex")
-    names["pdffile"] = dst_tex_stem + ".pdf"
-    if style == "JHEP":
-        names["archive"] = dst_tex_stem + ".JHEP.tar.gz"
-        names["arcwpdf"] = dst_tex_stem + ".JHEP_withpdf.tar.gz"
+    names['tempdir'] = dst_tex_stem
+    names['texfile'] = os.path.join(os.path.dirname(src_tex_path), dst_tex_stem + '.tex')
+    names['pdffile'] = dst_tex_stem + '.pdf'
+    if style == 'JHEP':
+        names['archive'] = dst_tex_stem + '.JHEP.tar.gz'
+        names['arcwpdf'] = dst_tex_stem + '.JHEP_withpdf.tar.gz'
     else:
-        names["archive"] = dst_tex_stem + ".tar.gz"
-        names["arcwpdf"] = dst_tex_stem + ".withpdf.tar.gz"
+        names['archive'] = dst_tex_stem + '.tar.gz'
+        names['arcwpdf'] = dst_tex_stem + '.withpdf.tar.gz'
 
-    dst_path = lambda tag: os.path.join(names["tempdir"], names[tag])
+    dst_path = lambda tag: os.path.join(names['tempdir'], names[tag])
 
     # files created in the current directory
-    for tag in ["tempdir", "pdffile", "archive", "arcwpdf"]:
+    for tag in ['tempdir', 'pdffile', 'archive', 'arcwpdf']:
         check_absence(names[tag])
 
-    deps = get_and_collect_dependencies(src_tex_path, names["tempdir"], names["texfile"])
+    deps = get_and_collect_dependencies(src_tex_path, names['tempdir'], names['texfile'])
 
-    with cd(names["tempdir"]):
-        compile(names["texfile"], remove_misc = True, quiet = True)
+    with cd(names['tempdir']):
+        compile({'texfile': names['texfile']}, remove_misc = True, quiet = True)
         [remove_file(f.replace('.eps', '-eps-converted-to.pdf')) for f in deps if f.endswith('.eps')]
 
-    if style == "JHEP":
-        basedir = names["tempdir"]
-        names["arcwpdf"] = os.path.join("..", names["arcwpdf"])
-        names["archive"] = os.path.join("..", names["archive"])
-        targets = lambda: os.listdir(names["tempdir"])
+    if style == 'JHEP':
+        basedir = names['tempdir']
+        names['arcwpdf'] = os.path.join('..', names['arcwpdf'])
+        names['archive'] = os.path.join('..', names['archive'])
+        targets = lambda: os.listdir(names['tempdir'])
     else:
         basedir = '.'
-        targets = lambda: [names["tempdir"]]
+        targets = lambda: [names['tempdir']]
 
-    print("\n\n" + Color.green("Compressing into " + Color.b + names["arcwpdf"] + Color.g + " with PDF."))
-    subprocess.Popen(['tar', 'czvf', names["arcwpdf"]] + targets(), cwd = basedir).communicate()
+    print("\n\n" + Color.green('Compressing into ' + Color.b + names['arcwpdf'] + Color.g + ' with PDF.'))
+    subprocess.Popen(['tar', 'czvf', names['arcwpdf']] + targets(), cwd = basedir).communicate()
 
-    shutil.move(dst_path("pdffile"), '.')
+    shutil.move(dst_path('pdffile'), '.')
 
-    print("\n\n" + Color.green("Compressing into " + Color.b + names["archive"] + Color.g + " without PDF."))
-    subprocess.Popen(['tar', 'czvf', names["archive"]] + targets(), cwd = basedir).communicate()
+    print("\n\n" + Color.green('Compressing into ' + Color.b + names['archive'] + Color.g + ' without PDF.'))
+    subprocess.Popen(['tar', 'czvf', names['archive']] + targets(), cwd = basedir).communicate()
 
-    if style == "JHEP":
-        print("\n" + Color.green("The archives are without top directory, ready for JHEP-submission."))
+    if style == 'JHEP':
+        print("\n" + Color.green('The archives are without top directory, ready for JHEP-submission.'))
 
 
 def push(config, suffix = None):
     """Update the files in ``remotedir_path`` with the local version.
     ``.tex``, ``.bbl``, and ``.pdf`` files are updated as well as requisites."""
 
-    texfile_path   = config.get("texfile")
-    remotedir_path = config["remotedir"]
+    texfile_path   = config.get('texfile')
+    remotedir_path = config['remotedir']
+    remote_path    = lambda src: os.path.join(remotedir_path, src)
+    file_list      = []
 
-    compile(texfile_path, quiet = True)
+    dependencies = []
+    if texfile_path:
+        compile(config, quiet = True)
+        stem = get_tex_stem(texfile_path)
 
-    stem = get_tex_stem(texfile_path)
-    dst_path = lambda src: os.path.join(remotedir_path, src)
-
-    files = [ # src, dst
-        (texfile_path, dst_path(os.path.join(os.path.dirname(texfile_path), stem + (suffix or "") + '.tex'))),
-        (stem + '.bbl', dst_path(stem + (suffix or "") + '.bbl')),
-        (stem + '.pdf', dst_path(stem + (suffix or "") + '.pdf'))]
-
-    # tags: create, ignore, update
-    file_list = []
-    for src, dst in files:
-        if not os.path.isfile(src):
-            warning('{} not found.'.format(src))
-            continue
-        if os.path.islink(dst):
-            error('{} already exists as a symlink.'.format(dst))
-        elif os.path.isdir(dst):
-            error('{} already exists as a directory.'.format(dst))
-        elif os.path.lexists(dst):
-            tag = 'update'
-        else:
-            tag = 'create'
-        file_list.append((tag, src, dst))
-    existing_files = [dst for tag, src, dst in file_list if tag == 'update']
-    if existing_files:
-        print(Color.yellow('The following files exist.'))
-        [print(dst) for dst in existing_files]
-        if input(Color.yellow("\nFORCE OVERWRITE? (y/N) ")).lower() != 'y':
-            error('Abort.')
-
-    for src in get_dependencies(texfile_path):
-        if os.path.isabs(src):
-            # NOTE: should be warning? MISHO cannot imagine the case falling here.
-            error('This TeX depends on {}, which cannot be pushed.'.format(src))
-        dst = dst_path(src)
-        mode = ''
-        if not os.path.exists(src):
-            # FileNotFound should be treated by TeX compiler.
-            # Just ignore such files.
-            continue
-        elif os.path.lexists(dst):
-            if os.path.islink(dst):
-                error('{} already exists as a symlink.'.format(dst))
-            elif os.path.isdir(dst):
-                error('{} already exists as a directory.'.format(dst))
-            elif os.path.isfile(dst):
-                mode = compare_files_and_get_mode(src, dst)
+        files = { # key = src, dst
+            'tex': {'src': texfile_path,  'dst': remote_path(os.path.join(os.path.dirname(texfile_path), stem + (suffix or '') + '.tex'))},
+            'pdf': {'src': stem + '.pdf', 'dst': remote_path(stem + (suffix or '') + '.pdf')},
+            'bbl': {'src': stem + '.bbl', 'dst': remote_path(stem + (suffix or '') + '.bbl')},
+        }
+        if not os.path.isfile(files['bbl']['src']):
+            del files['bbl']
+        for k, v in files.items():
+            if os.path.isfile(v['src']):
+                files[k]['mode'] = compare_files_and_get_mode(v['src'], v['dst'])
             else:
-                raise RuntimeError('{} cannot be identified.'.format(dst))
+                error('{} not found.'.format(v['src']))
+
+        existing_files = [k for k, v in files.items() if v['mode'] == 'conflict' or v['mode'] == 'update']
+        if existing_files and files['tex']['mode'] == 'ignore':
+            [print('  ' + Color.mode_tag(v['mode']) + ' ' + v['src']) for k, v in files.items()]
+            if input("\nIgnore the differences in PDF / bbl? (Y/n) ").lower() != 'n':
+                for k in existing_files:
+                    files[k]['mode'] = 'ignore'
+            elif input(Color.yellow("\nForce update these files? (y/N) ")).lower() == 'y':
+                for k in existing_files:
+                    files[k]['mode'] = 'update'
+            else:
+                error('Abort.')
+
+        for v in files.values():
+            file_list.append((v['mode'], v['src'], v['dst']))
+
+        dependencies = get_dependencies(texfile_path)
+        for src in dependencies:
+            if os.path.isabs(src):
+                # NOTE: should be warning? MISHO cannot imagine the case falling here.
+                error('This TeX depends on {}, which cannot be pushed.'.format(src))
+
+    for src in config.get('extra', []):
+        if not os.path.exists(src):
+            warning('extra file {} not found and ignored.'.format(src))
         else:
-            mode = 'create'
+            dependencies.append(src)
+
+    for src in dependencies:
+        dst = remote_path(src)
+        mode = compare_files_and_get_mode(src, dst)
         file_list.append((mode, src, dst))
 
     push_and_pull_execute(file_list)
     return
 
 
-def push_and_pull_execute(file_list):
-    header = dict(
-            create = Color.green('[create]'),
-            update = Color.yellow('[update]'),
-            conflict = Color.red('[conflict]'),
-            ignore = '[ignore]')
 
+def push_and_pull_execute(file_list):
     print("\nOperation:")
-    [print('  ' + header[tag] + ' ' + dst) for tag, src, dst in file_list]
+    [print('  ' + Color.mode_tag(tag) + ' ' + dst) for tag, src, dst in file_list]
 
     if [x for x in file_list if x[0] == 'conflict']:
         error('Conflict detected. Abort for safety.')
@@ -486,62 +506,48 @@ def pull(config, suffix = None):
     ``.bbl`` and ``.pdf`` files are kept.
     Requisites are updated."""
 
-    texfile_path   = config.get("texfile")
-    remotedir_path = config["remotedir"]
-    stem = get_tex_stem(texfile_path, check_exists = False)
-    remote_path = lambda src: os.path.join(remotedir_path, src)
+    texfile_path   = config.get('texfile')
+    remotedir_path = config['remotedir']
+    remote_path    = lambda src: os.path.join(remotedir_path, src)
+    file_list      = []
 
-    texfile_path_remote = os.path.join(os.path.dirname(texfile_path), stem + (suffix or "") + '.tex')
-    remote_tex          = remote_path(texfile_path_remote)
-    if not os.path.isfile(remote_tex):
-        d = os.path.dirname(remote_tex)
-        candidates = "\t".join([f for f in os.listdir(d) if os.path.isfile(os.path.join(d, f)) and f.startswith(stem) and f.endswith('.tex') ])
-        error('{tex} not found.\n\nCandidates are:\n{candidates}'.format(
-            tex = remote_tex,
-            candidates = candidates,
+    dependencies = []
+    if texfile_path:
+        stem                = get_tex_stem(texfile_path, check_exists = False)
+        texfile_path_remote = os.path.join(os.path.dirname(texfile_path), stem + (suffix or '') + '.tex')
+        remote_tex          = remote_path(texfile_path_remote)
+        if not os.path.isfile(remote_tex):
+            d = os.path.dirname(remote_tex)
+            candidates = "\t".join([f for f in os.listdir(d) if os.path.isfile(os.path.join(d, f)) and f.startswith(stem) and f.endswith('.tex') ])
+            error('{tex} not found.\n\nCandidates are:\n{candidates}'.format(
+                tex = remote_tex,
+                candidates = candidates,
             ))
 
-    file_list = []
-    mode = ''
-    if os.path.lexists(texfile_path):
-        if os.path.islink(texfile_path) or not os.path.isfile(texfile_path):
-            error('{} is not a file.'.format(texfile_path))
         mode = compare_files_and_get_mode(remote_tex, texfile_path)
-    else:
-        mode = 'create'
-    file_list.append((mode, remote_tex, texfile_path))
+        file_list.append((mode, remote_tex, texfile_path))
 
-    tempdir = tempfile.mkdtemp()
-    with cd(remotedir_path):
-        dependents = get_and_collect_dependencies(texfile_path_remote, tempdir, texfile_path)
-    shutil.rmtree(tempdir)
+        tempdir = tempfile.mkdtemp()
+        with cd(remotedir_path):
+            dependencies = get_and_collect_dependencies(texfile_path_remote, tempdir, texfile_path)
+        shutil.rmtree(tempdir)
+        for dst in dependencies:
+            if os.path.isabs(dst):
+                # NOTE: should be warning? MISHO cannot imagine the case falling here.
+                error('This TeX depends on {}, which cannot be pushed.'.format(dst))
 
-    for dst in dependents:
-        if os.path.isabs(dst):
-            # NOTE: should be warning? MISHO cannot imagine the case falling here.
-            error('This TeX depends on {}, which cannot be pushed.'.format(src))
+    for dst in config.get('extra', []):
+        if not os.path.exists(remote_path(dst)):
+            warning('extra file {} not found and ignored.'.format(remote_path(dst)))
+        dependencies.append(dst)
+
+    for dst in dependencies:
         src = remote_path(dst)
-        mode = ''
-        if not os.path.exists(src):
-            # FileNotFound should be treated by TeX compiler.
-            # Just ignore such files.
-            continue
-        elif os.path.lexists(dst):
-            if os.path.islink(dst):
-                error('{} already exists as a symlink.'.format(dst))
-            elif os.path.isdir(dst):
-                error('{} already exists as a directory.'.format(dst))
-            elif os.path.isfile(dst):
-                mode = compare_files_and_get_mode(src, dst)
-            else:
-                raise RuntimeError('{} cannot be identified.'.format(dst))
-        else:
-            mode = 'create'
+        mode = compare_files_and_get_mode(src, dst)
         file_list.append((mode, src, dst))
 
     push_and_pull_execute(file_list)
     return
-
 
 
 if __name__ == '__main__':
@@ -571,11 +577,11 @@ if __name__ == '__main__':
         usage('unknown command: ' + command)
     if not(len(args) in args_length):
         usage('invalid options are specified for the command "' + command + '"' + \
-              ("\n(maybe wrong <texfile> is specified?)" if (len(args) - 1 in args_length and target is None) else ""))
+              ("\n(maybe wrong <texfile> is specified?)" if (len(args) - 1 in args_length and target is None) else ''))
 
     if target is None:
         if len(config_list) == 1:
-            target = config_list.keys()[0]
+            target = list(config_list.keys())[0]
         else:
             usage('<texfile> is missing')
 
@@ -585,18 +591,18 @@ if __name__ == '__main__':
         if config.get(item) is None:
             error('command "' + command + '" is invalid without "' + item + '" in configuration.')
 
-    if command == "compile":
+    if command == 'compile':
         needs('texfile')
         compile(config)
-    elif command == "archive":
+    elif command == 'archive':
         needs('texfile')
         archive(config, args[0])
-    elif command == "JHEP":
+    elif command == 'JHEP':
         needs('texfile')
-        archive(config, args[0], style = "JHEP")
-    if command == "pull":
+        archive(config, args[0], style = 'JHEP')
+    if command == 'pull':
         needs('remotedir')
         pull(config, suffix = (args[0] if len(args) == 1 else None))
-    elif command == "push":
+    elif command == 'push':
         needs('remotedir')
         push(config, suffix = (args[0] if len(args) == 1 else None))
