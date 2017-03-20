@@ -285,7 +285,7 @@ def get_and_collect_dependencies(orig_texfile_path, target_dir, new_texfile_path
     and files required to compile are collected to ``target_dir``.
     """
     copy_with_mkdir(orig_texfile_path, os.path.join(target_dir, new_texfile_path))
-    for trial in range(0, 5):
+    for trial in range(0, 10):
         with cd(target_dir):
             deps = get_dependencies(new_texfile_path)
             deps_to_copy = [f for f in deps if not os.path.exists(f)]
@@ -300,6 +300,7 @@ def get_and_collect_dependencies(orig_texfile_path, target_dir, new_texfile_path
                 warning('Required file {} not found.'.format(f))
         if not retry:
             return deps
+        print(deps)
     error('Dependency not solved.')
 
 def compare_files_and_get_mode(src, dst):
