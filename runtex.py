@@ -262,12 +262,12 @@ def pdf_from_eps(files):
             f.replace('-eps-converted-to.pdf', '.eps') in files]
 
 
-def get_dependencies(texfile_path):
+def get_dependencies(texfile_path, options=list()):
     """Return files required to compile ``texfile_path``, excluding ``texfile_path`` itself."""
     print("\n\n" + Color.green('Check dependency of ' + Color.b + texfile_path + Color.g + '.'))
 
     output, stderr = subprocess.Popen(
-            [latexmk, '-g', '-deps', '-bibtex-', '-interaction=nonstopmode', '-quiet', texfile_path],
+            [latexmk, '-g', '-deps', '-bibtex-', '-interaction=nonstopmode', '-quiet'] + options + [texfile_path],
             stdout=subprocess.PIPE).communicate()
 
     begin_tag = '#===Dependents for '
@@ -293,24 +293,34 @@ def get_dependencies(texfile_path):
 
 def get_and_collect_dependencies(orig_texfile_path, target_dir, new_texfile_path):
     """
-    Return files required to compile ``orig_texfile_path`` (relative path from ``cwd``),
-    but the TeX file is copied to ``target_dir``/``new_texfile_path``
+    Return files required to compile ``orig_texfile_path`` relative to ``cwd``.
+    During the process the TeX file is copied to ``target_dir``/``new_texfile_path``
     and files required to compile are collected to ``target_dir``.
     """
+    if not new_texfile_path.endswith('.tex'):
+        raise RuntimeError('get_anc_collect_dependencies: new_texfile_path should have ".tex" extention.')
+
+    # First trial is done using 'outdir' so that TeX file search correctly works.
     copy_with_mkdir(orig_texfile_path, os.path.join(target_dir, new_texfile_path))
+    deps = get_dependencies(orig_texfile_path, ['-outdir=' + target_dir, '-jobname=' + new_texfile_path[0:-4]])
+
     for trial in range(0, 10):
         with cd(target_dir):
-            deps = get_dependencies(new_texfile_path)
+            if trial != 0:
+                # update dependency, but now simply invoke at the target dir.
+                deps = get_dependencies(new_texfile_path)
             deps_to_copy = [f for f in deps if not os.path.exists(f)]
+
         retry = False
+        warnings = list()
         for f in deps_to_copy:
             if os.path.isabs(f):
-                warning('This TeX depends on {}, which is not archived. '.format(f))
+                warnings.append('This TeX depends on {}, which is not archived. '.format(f))
             elif os.path.exists(f):
                 copy_with_mkdir(f, os.path.join(target_dir, f))
                 retry = True
             else:
-                warning('Required file {} not found.'.format(f))
+                warnings.append('Required file {} not found.'.format(f))
         if not retry:
             return deps
         print(deps)
@@ -554,8 +564,8 @@ def pull(config, suffix=None):
         shutil.rmtree(tempdir)
         for dst in dependencies:
             if os.path.isabs(dst):
-                # NOTE: should be warning? MISHO cannot imagine the case falling here.
-                error('This TeX depends on {}, which cannot be pushed.'.format(dst))
+                warning('This TeX depends on {}, which is not pulled and ignored.'.format(dst))
+                warning('(For developers: this is an unexpected case.)')
 
     for dst in config.get('extra', []):
         if not os.path.exists(remote_path(dst)):
