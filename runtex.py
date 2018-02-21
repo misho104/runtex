@@ -236,9 +236,9 @@ def check_absence(path):
     pass
 
 
-def abort_if_not_file(path):
+def abort_if_not_file(path, allow_symlink=False):
     if os.path.lexists(path):
-        if os.path.islink(path):
+        if not allow_symlink and os.path.islink(path):
             error('{} exists as a symlink.'.format(path))
         elif os.path.isdir(path):
             error('{} exists as a directory.'.format(path))
@@ -331,10 +331,11 @@ def compare_files_and_get_mode(src, dst):
     """Compare files, assuming ``src`` and ``dst`` are existing files."""
     if not os.path.lexists(dst):
         return 'create'
-    abort_if_not_file(dst)
+    abort_if_not_file(dst, allow_symlink=True)
     if filecmp.cmp(src, dst):
         return 'ignore'
-    elif os.stat(src).st_mtime > os.stat(dst).st_mtime:
+    abort_if_not_file(dst)
+    if os.stat(src).st_mtime > os.stat(dst).st_mtime:
         return 'update'
     else:
         return 'conflict'
