@@ -362,7 +362,7 @@ def compile_tex(config, remove_misc=False, quiet=False):
         tempdir = tempfile.mkdtemp()
         shelters = {}
         # pdf and bbl are created in current dirrectory.
-        for ext in ['.pdf', '.bbl']:
+        for ext in ['.pdf', '.bbl', '.ax2']:
             src = os.path.join(texfile_stem + ext)
             dst = os.path.join(tempdir, src)
             if os.path.exists(src):
@@ -461,6 +461,13 @@ def push(config, suffix=None):
             'pdf': {'src': stem + '.pdf', 'dst': remote_path(stem + (suffix or '') + '.pdf')},
             'bbl': {'src': stem + '.bbl', 'dst': remote_path(stem + (suffix or '') + '.bbl')},
         }
+
+        def remote_path(src_name):
+            for ext in [".ax2"]:
+                if src_name == stem + ext:
+                    src_name = stem + (suffix or '') + ext
+            return os.path.join(remotedir_path, src_name)
+
         if not os.path.isfile(files['bbl']['src']):
             del files['bbl']
         for k, v in files.items():
@@ -546,6 +553,13 @@ def pull(config, suffix=None):
         stem = get_tex_stem(texfile_path, check_exists=False)
         texfile_path_remote = os.path.join(os.path.dirname(texfile_path), stem + (suffix or '') + '.tex')
         remote_tex = remote_path(texfile_path_remote)
+
+        def remote_path(src_name):
+            for ext in [".ax2"]:
+                if src_name == stem + ext:
+                    src_name = get_tex_stem(remote_tex) + ext
+            return os.path.join(remotedir_path, src_name)
+
         if not os.path.isfile(remote_tex):
             d = os.path.dirname(remote_tex)
             candidates = "\t".join([f for f in os.listdir(d)
