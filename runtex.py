@@ -1,6 +1,6 @@
 #!env python3
 # -*- coding: utf-8 -*-
-# Time-Stamp: <2016-06-27 16:03:35>
+# Time-Stamp: <2020-04-02 12:22:28>
 
 import os
 import sys
@@ -266,11 +266,14 @@ def get_dependencies(texfile_path, options=list()):
     """Return files required to compile ``texfile_path``, excluding ``texfile_path`` itself."""
     print("\n\n" + Color.green('Check dependency of ' + Color.b + texfile_path + Color.g + '.'))
 
+    my_env = os.environ.copy()
+    my_env['BIBINPUTS'] = '.'
+    my_env['BSTINPUTS'] = '.'
     output, stderr = subprocess.Popen(
             [latexmk, '-g', '-deps', '-bibtex-', '-interaction=nonstopmode', '-quiet'] + options + [texfile_path],
-            stdout=subprocess.PIPE).communicate()
+            stdout=subprocess.PIPE, env=my_env).communicate()
 
-    begin_tag = '#===Dependents for '
+    begin_tag = '#===Dependents'
     end_tag = '#===End dependents for '
     dep = output.decode('utf-8')
     dep = dep[dep.index(begin_tag):]
